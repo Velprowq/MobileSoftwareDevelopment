@@ -18,7 +18,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -73,18 +72,17 @@ fun CardTop(name: String, title: String) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+       
         Box(
             modifier = Modifier
-                .size(130.dp)
+                .size(150.dp)
                 .background(Color(0xFF4CAF50), CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Image(
-                painter = painterResource(id = R.drawable._68975f399642b7d50729fe2f5aa13be), 
+                painter = painterResource(id = R.drawable.ic_launcher_foreground),
                 contentDescription = "个人头像",
-                modifier = Modifier
-                    .size(120.dp)
-                    .clip(CircleShape),
+                modifier = Modifier.size(140.dp),
                 contentScale = ContentScale.Crop
             )
         }
@@ -132,7 +130,6 @@ fun ContactRow(icon: androidx.compose.ui.graphics.vector.ImageVector, info: Stri
         )
 
         Spacer(modifier = Modifier.width(16.dp))
-
         Text(
             text = info,
             fontSize = 17.sp,
