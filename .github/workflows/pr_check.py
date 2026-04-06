@@ -304,103 +304,92 @@ def check_file_scope(student_id_name: str, lab: str, changed_files: list):
 
 # ── 步骤 4：截止时间检查 ──────────────────────────────────
 
-# 格式1: "截止时间：2024-03-22 18:00"
-DEADLINE_INLINE_DATETIME_RE = re.compile(
-    r"截止[时日][间期][：:]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})\s+(\d{1,2}:\d{2})"
+# ── 步骤 4：截止时间检查（终极版）──────────────────────────
+
+DATE_RE = re.compile(
+    r"(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})日?"
 )
-# 格式2: "截止时间：2024-03-22"
-DEADLINE_INLINE_DATE_RE = re.compile(
-    r"截止[时日][间期][：:]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})(?!\s*\d)"
+
+TIME_RE = re.compile(
+    r"(上午|下午|晚上)?\s*(\d{1,2}):(\d{2})"
 )
-# 格式3: "## 截止时间" 标题，下一行是 "2026-04-10，届时..."
-DEADLINE_HEADING_RE = re.compile(r"#+\s*截止时间\s*\n+\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})")
+
+
+def parse_datetime_from_text(text: str):
+    results = []
+
+    for date_match in DATE_RE.finditer(text):
+        year, month, day = map(int, date_match.groups())
+
+        # 默认时间 18:00
+        hour, minute = 18, 0
+
+        # 在日期后面找时间（局部窗口）
+        snippet = text[date_match.end(): date_match.end() + 30]
+
+        time_match = TIME_RE.search(snippet)
+        if time_match:
+            period, h, m = time_match.groups()
+            hour, minute = int(h), int(m)
+
+            if period in ["下午", "晚上"] and hour < 12:
+                hour += 12
+
+        try:
+            dt = datetime.datetime(year, month, day, hour, minute)
+            results.append(dt)
+        except ValueError:
+            continue
+
+    return results
 
 
 def get_deadline(lab: str):
-    """返回 datetime 对象（北京时间），读不到返回 None"""
     content = get_file_content(f"homework/{lab}/{lab}.md")
     if not content:
         return None
 
-    # 格式1: 带时分的行内截止时间
-    m = DEADLINE_INLINE_DATETIME_RE.search(content)
-    if m:
-        date_str = m.group(1).replace("/", "-")
-        time_str = m.group(2)
-        try:
-            return datetime.datetime.fromisoformat(f"{date_str}T{time_str}:00")
-        except ValueError:
-            pass
+    candidates = parse_datetime_from_text(content)
+    if not candidates:
+        return None
 
-    # 格式2: 只有日期的行内截止时间
-    m = DEADLINE_INLINE_DATE_RE.search(content)
-    if m:
-        date_str = m.group(1).replace("/", "-")
-        try:
-            d = datetime.date.fromisoformat(date_str)
-            return datetime.datetime(d.year, d.month, d.day, 18, 0, 0)
-        except ValueError:
-            pass
+    now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
 
-    # 格式3: 标题式截止时间（## 截止时间 + 下一行日期）
-    m = DEADLINE_HEADING_RE.search(content)
-    if m:
-        date_str = m.group(1).replace("/", "-")
-        try:
-            d = datetime.date.fromisoformat(date_str)
-            return datetime.datetime(d.year, d.month, d.day, 18, 0, 0)
-        except ValueError:
-            pass
+    future = [dt for dt in candidates if dt >= now]
 
-    return None
+    if future:
+        return min(future)   # 最近未来时间
+    else:
+        return max(candidates)  # 都过期 → 取最后一个
 
 
 def check_deadline(lab: str):
     deadline = get_deadline(lab)
+
     if deadline is None:
         print("  [跳过] 未找到截止时间，跳过时间检查")
         return
 
-    # 当前北京时间
     now_bj = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
 
     if now_bj <= deadline:
-        return  # 未超时，正常通过
+        return
 
     delta = now_bj - deadline
     delta_days = delta.days
     delta_hours = int(delta.total_seconds() // 3600)
 
-    # 超时时长描述
-    if delta_days >= 1:
-        overtime_str = f"{delta_days} 天"
-    else:
-        overtime_str = f"{delta_hours} 小时"
+    overtime_str = f"{delta_days} 天" if delta_days >= 1 else f"{delta_hours} 小时"
 
-    timeout_msg = (
+    comment(
         f"## PR 检查未通过 ❌\n\n"
         f"此 PR 已超时。\n\n"
-        f"- **作业截止时间**：{deadline.strftime('%Y-%m-%d %H:%M')}\n"
-        f"- **当前时间**：{now_bj.strftime('%Y-%m-%d %H:%M')}（北京时间）\n"
-        f"- **超时时长**：{overtime_str}\n\n"
-        f"超过截止时间，暂不予合并。如有特殊情况，请联系老师说明。\n\n"
-        f"---\n*此评论由自动审核机器人生成。*"
+        f"- 截止时间：{deadline.strftime('%Y-%m-%d %H:%M')}\n"
+        f"- 当前时间：{now_bj.strftime('%Y-%m-%d %H:%M')}（北京时间）\n"
+        f"- 超时时长：{overtime_str}\n\n"
+        f"超过截止时间，暂不予合并。"
     )
-
-    if delta_days > 7:
-        # 超时 7 天以上，关闭 PR
-        comment(
-            timeout_msg.replace(
-                "暂不予合并。如有特殊情况，请联系老师说明。",
-                "超时 7 天以上，PR 已自动关闭。",
-            )
-        )
-        close_pr()
-        sys.exit(0)
-    else:
-        # 超时 0-7 天，评论拒绝但不关闭
-        comment(timeout_msg)
-        sys.exit(0)
+    sys.exit(0)
 
 
 # ── 步骤 5：Kimi 全面审核 ─────────────────────────────────
@@ -473,7 +462,7 @@ def check_with_kimi(student_id_name: str, lab: str, changed_files: list):
                 "Content-Type": "application/json",
             },
             json={
-                "model": "kimi-k2.5",
+                "model": "moonshot-v1-32k",
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_msg},
@@ -504,6 +493,8 @@ def main():
     # 实时获取最新 PR 标题，防止读到缓存的旧标题
     pr_data = gh_get(f"/repos/{REPO}/pulls/{PR_NUMBER}")
     PR_TITLE = pr_data.get("title", PR_TITLE)
+    
+
     
     print(f"[PR #{PR_NUMBER}] 开始审核：{PR_TITLE}")
 
